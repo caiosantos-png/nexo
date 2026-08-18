@@ -635,10 +635,26 @@ function renderMonthTable(){
   table.innerHTML = thead + tbody;
 }
 
+const MESES_PT_ORDEM = { JANEIRO:1,FEVEREIRO:2,'MARÇO':3,MARCO:3,ABRIL:4,MAIO:5,JUNHO:6,JULHO:7,AGOSTO:8,SETEMBRO:9,OUTUBRO:10,NOVEMBRO:11,DEZEMBRO:12 };
+function periodSortKey(datasetId){
+  const d = state.datasets.find(x => x.id === datasetId);
+  if(!d) return 0;
+  const label = (d.rotulo || d.nome_aba || '').toUpperCase();
+  for(const [nome, num] of Object.entries(MESES_PT_ORDEM)){
+    if(label.includes(nome)){
+      const anoMatch = label.match(/(20\d{2})/);
+      return (anoMatch ? parseInt(anoMatch[1],10) : 0) * 100 + num;
+    }
+  }
+  return new Date(d.created_at || 0).getTime(); // sem mês reconhecível: cai pra ordem de importação
+}
+function sortedDatasetIds(){ return state.datasets.map(d=>d.id).sort((a,b) => periodSortKey(a) - periodSortKey(b)); }
+
 function renderDatasetChecklist(){
   const box = document.getElementById('compareDatasetList');
   if(!state.datasets.length){ box.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">Nenhuma planilha importada ainda.</p>'; return; }
-  box.innerHTML = state.datasets.map(d => `
+  const ordered = sortedDatasetIds().map(id => state.datasets.find(d=>d.id===id));
+  box.innerHTML = ordered.map(d => `
     <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px;">
       <input type="checkbox" class="cmp-check" value="${d.id}">
       ${d.rotulo || d.nome_aba} <span style="color:var(--text-dim); font-family:var(--font-mono); font-size:11px;">(${d.total_registros} registros)</span>
@@ -646,8 +662,9 @@ function renderDatasetChecklist(){
 }
 
 document.getElementById('btnCompareDatasets').addEventListener('click', () => {
-  const ids = [...document.querySelectorAll('.cmp-check:checked')].map(c => c.value);
+  let ids = [...document.querySelectorAll('.cmp-check:checked')].map(c => c.value);
   if(ids.length < 2){ alert('Selecione pelo menos 2 planilhas pra comparar.'); return; }
+  ids = ids.sort((a,b) => periodSortKey(a) - periodSortKey(b)); // sempre do mês mais antigo pro mais recente
   const analyses = ids.map(id => ({
     id, label: datasetLabel(id),
     analysis: computeAnalysis(mergedColumnsFor([id]), state.records.filter(r => r.dataset_id === id))
