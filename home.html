@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXO — Projetos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark"><span class="sweep"></span></span>
+    <div class="brand-text"><span class="brand-name">NEXO</span><span class="brand-sub">planilha vira painel</span></div>
+  </div>
+  <div class="topbar-actions">
+    <span class="user-chip" id="userChip"></span>
+    <button class="btn btn-ghost" id="btnLogout">Sair</button>
+  </div>
+</header>
+
+<div class="page-wrap">
+  <div class="page-head">
+    <div>
+      <h1>Seus projetos</h1>
+      <p>Cada projeto é uma planilha (ou várias) transformada em painel e apresentação.</p>
+    </div>
+    <button class="btn btn-primary" id="btnNewProject">+ Novo projeto</button>
+  </div>
+
+  <div id="loadingState" class="loading-state">carregando projetos...</div>
+  <div id="emptyState" class="empty-projects hidden">
+    <h2>Nenhum projeto ainda</h2>
+    <p>Crie o primeiro projeto e importe uma planilha pra ver o painel ganhar forma.</p>
+    <br>
+    <button class="btn btn-primary" id="btnNewProjectEmpty">+ Criar meu primeiro projeto</button>
+  </div>
+  <div id="projectsGrid" class="projects-grid hidden"></div>
+</div>
+
+<!-- Modal: novo projeto -->
+<div id="newProjectModal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <span>Novo projeto</span>
+      <button class="modal-close" id="btnCloseModal">✕</button>
+    </div>
+    <div class="field">
+      <label for="npNome">Nome do projeto</label>
+      <input type="text" id="npNome" placeholder="Ex: Vendas Q1, Roubo de veículos 2026...">
+    </div>
+    <div class="field">
+      <label for="npArea">Área (opcional — ajuda o texto dos insights)</label>
+      <input type="text" id="npArea" placeholder="Ex: Vendas, Financeiro, RH, Operações...">
+    </div>
+    <div class="field">
+      <label for="npDesc">Descrição (opcional)</label>
+      <input type="text" id="npDesc" placeholder="Uma linha sobre esse projeto">
+    </div>
+    <div id="npError" class="form-error hidden"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btnCancelNew">Cancelar</button>
+      <button class="btn btn-primary" id="btnCreateProject">Criar projeto</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/home.js"></script>
+</body>
+</html>

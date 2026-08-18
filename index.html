@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXO — Entrar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="center-screen">
+  <div class="auth-card">
+    <div class="brand">
+      <span class="brand-mark"><span class="sweep"></span></span>
+      <div class="brand-text"><span class="brand-name">NEXO</span><span class="brand-sub">planilha vira painel</span></div>
+    </div>
+
+    <h1 id="formTitle">Entrar</h1>
+    <p class="sub" id="formSub">Acesse seus projetos</p>
+
+    <div id="formError" class="form-error hidden"></div>
+    <div id="formSuccess" class="form-success hidden"></div>
+
+    <div class="field hidden" id="nomeField">
+      <label for="fNome">Nome</label>
+      <input type="text" id="fNome" placeholder="Seu nome">
+    </div>
+    <div class="field">
+      <label for="fEmail">E-mail</label>
+      <input type="email" id="fEmail" placeholder="voce@empresa.com">
+    </div>
+    <div class="field">
+      <label for="fSenha">Senha</label>
+      <input type="password" id="fSenha" placeholder="••••••••">
+    </div>
+
+    <button id="btnSubmit" class="btn btn-primary btn-block">Entrar</button>
+
+    <div class="auth-toggle">
+      <span id="toggleText">Ainda não tem conta?</span> <a id="toggleLink">Criar conta</a>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/supabase-client.js"></script>
+<script>
+let mode = 'login'; // 'login' | 'signup'
+
+const els = {
+  title: document.getElementById('formTitle'),
+  sub: document.getElementById('formSub'),
+  nomeField: document.getElementById('nomeField'),
+  submit: document.getElementById('btnSubmit'),
+  toggleText: document.getElementById('toggleText'),
+  toggleLink: document.getElementById('toggleLink'),
+  error: document.getElementById('formError'),
+  success: document.getElementById('formSuccess'),
+};
+
+function setMode(m){
+  mode = m;
+  els.error.classList.add('hidden');
+  els.success.classList.add('hidden');
+  if(m === 'login'){
+    els.title.textContent = 'Entrar';
+    els.sub.textContent = 'Acesse seus projetos';
+    els.nomeField.classList.add('hidden');
+    els.submit.textContent = 'Entrar';
+    els.toggleText.textContent = 'Ainda não tem conta?';
+    els.toggleLink.textContent = 'Criar conta';
+  }else{
+    els.title.textContent = 'Criar conta';
+    els.sub.textContent = 'Comece a transformar suas planilhas em painéis';
+    els.nomeField.classList.remove('hidden');
+    els.submit.textContent = 'Criar conta';
+    els.toggleText.textContent = 'Já tem conta?';
+    els.toggleLink.textContent = 'Entrar';
+  }
+}
+els.toggleLink.addEventListener('click', () => setMode(mode === 'login' ? 'signup' : 'login'));
+
+els.submit.addEventListener('click', async () => {
+  const client = requireSupabaseConfig();
+  if(!client) return;
+  const email = document.getElementById('fEmail').value.trim();
+  const senha = document.getElementById('fSenha').value;
+  const nome = document.getElementById('fNome').value.trim();
+  els.error.classList.add('hidden');
+  els.success.classList.add('hidden');
+
+  if(!email || !senha){ showError('Preencha e-mail e senha.'); return; }
+
+  els.submit.disabled = true;
+  try{
+    if(mode === 'login'){
+      const { error } = await client.auth.signInWithPassword({ email, password: senha });
+      if(error) throw error;
+      window.location.href = 'home.html';
+    }else{
+      const { data, error } = await client.auth.signUp({ email, password: senha, options: { data: { nome } } });
+      if(error) throw error;
+      if(data.session){
+        window.location.href = 'home.html';
+      }else{
+        showSuccess('Conta criada! Verifique seu e-mail para confirmar o acesso, depois volte aqui e entre.');
+        setMode('login');
+      }
+    }
+  }catch(e){
+    showError(traduzErro(e.message));
+  }finally{
+    els.submit.disabled = false;
+  }
+});
+
+function showError(msg){ els.error.textContent = msg; els.error.classList.remove('hidden'); }
+function showSuccess(msg){ els.success.textContent = msg; els.success.classList.remove('hidden'); }
+function traduzErro(msg){
+  if(/invalid login credentials/i.test(msg)) return 'E-mail ou senha incorretos.';
+  if(/already registered/i.test(msg)) return 'Já existe uma conta com esse e-mail.';
+  if(/password should be/i.test(msg)) return 'A senha precisa ter pelo menos 6 caracteres.';
+  return msg;
+}
+
+// já logado? pula direto pra home
+(async () => {
+  if(!hasSupabaseConfig()) return;
+  const client = initSupabase();
+  const { data: { session } } = await client.auth.getSession();
+  if(session) window.location.href = 'home.html';
+})();
+</script>
+</body>
+</html>

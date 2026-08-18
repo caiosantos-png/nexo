@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXO — Projeto</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <a href="home.html" style="text-decoration:none; display:flex; align-items:center; gap:12px; color:inherit;">
+      <span class="brand-mark"><span class="sweep"></span></span>
+      <div class="brand-text"><span class="brand-name" id="projectName">NEXO</span><span class="brand-sub" id="projectArea">projeto</span></div>
+    </a>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn btn-ghost" id="btnSettings">⚙ Configurações</button>
+    <button class="btn btn-ghost" onclick="window.location.href='home.html'">← Todos os projetos</button>
+  </div>
+</header>
+
+<div class="page-wrap" style="max-width:1100px;">
+  <div id="loadingState" class="loading-state">carregando projeto...</div>
+
+  <!-- ======================= UPLOAD ======================= -->
+  <section id="uploadSection" class="hidden">
+    <div class="page-head">
+      <div>
+        <h1 id="uploadTitle">Importar planilha</h1>
+        <p>Envie um .xlsx ou .csv — de qualquer área. O NEXO lê o conteúdo das colunas pra descobrir sozinho o que é data, número, categoria ou indicador.</p>
+      </div>
+    </div>
+    <div id="dropZone" class="drop-zone">
+      <p>Arraste o arquivo aqui ou</p>
+      <label for="fileInput" class="btn btn-primary">Escolher arquivo (.xlsx / .csv)</label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
+      <span id="fileNameLabel" class="file-name"></span>
+    </div>
+
+    <div id="sheetPickerZone" class="hidden" style="margin-top:20px;">
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Abas encontradas</span><span class="panel-hint">marque as que têm dados</span></div>
+        <div id="sheetPickerGrid"></div>
+        <div class="modal-actions" style="justify-content:flex-start;">
+          <button id="btnAnalyzeSheets" class="btn btn-primary">Analisar colunas →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= PREVIEW / VALIDAÇÃO ======================= -->
+  <section id="previewSection" class="hidden">
+    <div class="page-head">
+      <div>
+        <h1>Confirme o que encontramos</h1>
+        <p id="previewSummary"></p>
+      </div>
+    </div>
+    <div id="previewCards"></div>
+    <div class="modal-actions" style="justify-content:flex-start; margin-top:8px;">
+      <button id="btnCancelPreview" class="btn btn-ghost">Cancelar</button>
+      <button id="btnConfirmPreview" class="btn btn-primary">Confirmar e gerar painel</button>
+    </div>
+    <p id="previewStatus" style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted); margin-top:10px;"></p>
+  </section>
+
+  <!-- ======================= DASHBOARD ======================= -->
+  <section id="dashboardSection" class="hidden">
+    <div class="page-head">
+      <div>
+        <h1>Painel</h1>
+        <p>Gerado a partir dos dados importados neste projeto.</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-ghost" id="btnImportMore">+ Importar outra planilha</button>
+        <button class="btn btn-ghost" id="btnPresent" disabled>Apresentação</button>
+        <button class="btn btn-ghost" id="btnExportPdf" disabled>Exportar PDF</button>
+        <button class="btn btn-primary" id="btnExportPptx" disabled>Exportar .pptx</button>
+      </div>
+    </div>
+
+    <div class="filters" style="justify-content:space-between;">
+      <div style="display:flex; align-items:center; gap:14px;">
+        <label style="font-size:12.5px; color:var(--text-muted);">Planilha:</label>
+        <select id="filterDataset"><option value="">Todas</option></select>
+      </div>
+      <nav class="tab-nav-inline">
+        <button class="tab-btn active" data-tab="tabPainel">Painel</button>
+        <button class="tab-btn" data-tab="tabDados">Dados</button>
+        <button class="tab-btn" data-tab="tabComparativo">Comparativo</button>
+      </nav>
+    </div>
+
+    <div id="tabPainel" class="tab-panel">
+      <div id="kpiStrip" class="kpi-strip"></div>
+
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Insights automáticos</span></div>
+        <ul id="insightsList" class="insights-list"></ul>
+      </div>
+
+      <div id="chartsGrid" class="charts-grid"></div>
+    </div>
+
+    <div id="tabDados" class="tab-panel hidden">
+      <div class="panel" id="columnsPanel">
+        <div class="panel-head">
+          <div><span class="panel-title">Colunas desta seleção</span> <span class="panel-hint">promova pra métrica/dimensão sem reimportar</span></div>
+          <button class="btn-link" id="btnToggleColumns">mostrar/ocultar</button>
+        </div>
+        <div id="columnsBody" class="table-wrap hidden"><table id="columnsTable" class="data-table"></table></div>
+      </div>
+
+      <div class="data-toolbar">
+        <input type="text" id="dataSearch" placeholder="Buscar em qualquer coluna...">
+        <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+          <label style="font-size:12px; color:var(--text-muted);">Novo registro em</label>
+          <select id="newRecordTarget"></select>
+        </div>
+        <button id="btnAddRecord" class="btn btn-primary btn-sm">+ Adicionar registro</button>
+        <button id="btnAddColumn" class="btn btn-ghost btn-sm">+ Nova coluna</button>
+      </div>
+      <div class="data-toolbar" style="padding-top:0;">
+        <span id="dataRangeLabel" class="data-range-label"></span>
+        <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
+          <button id="btnDataPrev" class="btn btn-ghost btn-sm">← anterior</button>
+          <span id="dataPageLabel" class="slide-counter">página 1</span>
+          <button id="btnDataNext" class="btn btn-ghost btn-sm">próxima →</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table id="dataTable" class="data-table edit-table"></table></div>
+      <p class="edit-hint">As alterações salvam ao sair do campo (Tab / clicar fora) e atualizam o Painel na hora.</p>
+    </div>
+
+    <div id="tabComparativo" class="tab-panel hidden">
+      <div class="panel">
+        <div class="panel-head">
+          <div><span class="panel-title">Mês a mês</span> <span class="panel-hint">veja se melhorou ou piorou de um mês pro outro</span></div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label style="font-size:12px; color:var(--text-muted);">Agrupar por</label>
+            <select id="monthDateSelect"></select>
+          </div>
+        </div>
+        <div class="table-wrap"><table id="monthTable" class="data-table"></table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div><span class="panel-title">Comparar planilhas</span> <span class="panel-hint">escolha 2 ou mais</span></div></div>
+        <div id="compareDatasetList"></div>
+        <div class="modal-actions" style="justify-content:flex-start; margin-top:10px;">
+          <button id="btnCompareDatasets" class="btn btn-primary btn-sm">Comparar selecionadas</button>
+        </div>
+        <div class="table-wrap" style="margin-top:14px;"><table id="compareTable" class="data-table"></table></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ======================= MODO APRESENTAÇÃO ======================= -->
+<section id="presentMode" class="present-mode hidden">
+  <button id="btnExitPresent" class="present-exit">Sair (Esc)</button>
+  <div id="slideContainer" class="slide-container"></div>
+  <div class="present-nav">
+    <button id="btnPrevSlide" class="btn btn-ghost">← anterior</button>
+    <span id="slideCounter" class="slide-counter">1 / 1</span>
+    <button id="btnNextSlide" class="btn btn-ghost">próximo →</button>
+  </div>
+</section>
+
+<div id="reportPrintArea" class="report-print"></div>
+
+<!-- ======================= CONFIGURAÇÕES DO PROJETO ======================= -->
+<div id="settingsModal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-head"><span>Configurações do projeto</span><button class="modal-close" id="btnCloseSettings">✕</button></div>
+
+    <div class="field">
+      <label for="setNome">Nome do projeto</label>
+      <input type="text" id="setNome">
+    </div>
+    <div class="field">
+      <label for="setCor">Cor de destaque</label>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <input type="color" id="setCor" value="#34C3B5" style="width:44px; height:36px; padding:2px; border-radius:6px; border:1px solid var(--border-hairline); background:var(--bg-panel-alt);">
+        <span style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">usada nos gráficos, KPIs, apresentação e exportações</span>
+      </div>
+    </div>
+    <div class="field">
+      <label>Logo</label>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <img id="logoPreview" src="" class="hidden" style="width:48px; height:48px; object-fit:contain; border-radius:8px; border:1px solid var(--border-hairline); background:#fff;">
+        <label for="logoInput" class="btn btn-ghost btn-sm">Escolher imagem</label>
+        <input type="file" id="logoInput" accept="image/*" hidden>
+        <button id="btnRemoveLogo" class="btn-link hidden">remover</button>
+      </div>
+    </div>
+    <div id="settingsError" class="form-error hidden"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btnCancelSettings">Cancelar</button>
+      <button class="btn btn-primary" id="btnSaveSettings">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/type-detector.js"></script>
+<script src="js/import-engine.js"></script>
+<script src="js/analysis-engine.js"></script>
+<script src="js/insights-engine.js"></script>
+<script src="js/presentation-engine.js"></script>
+<script src="js/project.js"></script>
+</body>
+</html>
