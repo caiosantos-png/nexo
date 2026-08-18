@@ -6,7 +6,7 @@
 
 const PALETTE = {
   alert: '#E4483C', signal: '#34C3B5', warn: '#F0A93B', grid: '#212B38', text: '#7C8794',
-  bars: ['#34C3B5','#2FA79C','#29938A','#237E77','#1D6963','#175450','#12403C','#0D2C29']
+  bars: ['#34C3B5','#F0A93B','#E4483C','#5B8DEF','#B075E5','#EC6BA0','#6FCF97','#F2994A','#56CCF2','#F5D033']
 };
 Chart.defaults.font.family = "'IBM Plex Mono', monospace";
 Chart.defaults.color = PALETTE.text;
@@ -706,7 +706,7 @@ function renderCharts(a){
     if(!usePizza){
       state.charts[id] = new Chart(document.getElementById(id), {
         type:'bar',
-        data:{ labels: rk.dados.map(r=>r.label), datasets:[{ data: rk.dados.map(r=>r.count), backgroundColor: rk.dados.map((_,i)=>i===0?PALETTE.warn:PALETTE.signal), borderRadius:4 }] },
+        data:{ labels: rk.dados.map(r=>r.label), datasets:[{ data: rk.dados.map(r=>r.count), backgroundColor: rk.dados.map((_,i)=>PALETTE.bars[i % PALETTE.bars.length]), borderRadius:4 }] },
         options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, datalabels:{ display:true, color:PALETTE.text, anchor:'end', align:'end', font:{size:11} }}, scales:{ x:{grid:{color:PALETTE.grid}}, y:{grid:{display:false}} } }
       });
     }else{
@@ -905,7 +905,7 @@ function renderSlides(a){
 function makeSlideChart(kind, data, canvas, colors){
   const labels = data.map(d => d.label), values = data.map(d => d.count);
   if(kind === 'bar-h'){
-    return new Chart(canvas, { type:'bar', data:{ labels, datasets:[{ data:values, backgroundColor: labels.map((_,i)=>i===0?PALETTE.warn:PALETTE.signal), borderRadius:4 }] },
+    return new Chart(canvas, { type:'bar', data:{ labels, datasets:[{ data:values, backgroundColor: labels.map((_,i)=>PALETTE.bars[i % PALETTE.bars.length]), borderRadius:4 }] },
       options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, datalabels:{ display:true, color:PALETTE.text, anchor:'end', align:'end' }}, scales:{ x:{grid:{color:PALETTE.grid}}, y:{grid:{display:false}} } } });
   }
   if(kind === 'donut'){
