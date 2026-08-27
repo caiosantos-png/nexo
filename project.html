@@ -84,14 +84,25 @@
     </div>
 
     <div class="filters" style="justify-content:space-between;">
-      <div style="display:flex; align-items:center; gap:14px;">
+      <div style="display:flex; align-items:center; gap:14px; position:relative;">
         <label style="font-size:12.5px; color:var(--text-muted);">Planilha:</label>
-        <select id="filterDataset"><option value="">Todas</option></select>
+        <div id="datasetMultiselect" style="position:relative;">
+          <button type="button" id="datasetMultiselectBtn" class="btn btn-ghost btn-sm" style="min-width:200px; text-align:left;">Todas</button>
+          <div id="datasetMultiselectPanel" class="multiselect-panel hidden">
+            <input type="text" id="datasetSearchInput" placeholder='Buscar (ex: "alamo carro")...'>
+            <div class="multiselect-actions">
+              <button type="button" id="btnDatasetSelectAll" class="btn-link">marcar visíveis</button>
+              <button type="button" id="btnDatasetSelectNone" class="btn-link">limpar seleção</button>
+            </div>
+            <div id="datasetCheckList" class="multiselect-list"></div>
+          </div>
+        </div>
       </div>
       <nav class="tab-nav-inline">
         <button class="tab-btn active" data-tab="tabPainel">Painel</button>
         <button class="tab-btn" data-tab="tabDados">Dados</button>
         <button class="tab-btn" data-tab="tabComparativo">Comparativo</button>
+        <button class="tab-btn" data-tab="tabAproveitamento">Aproveitamento</button>
       </nav>
     </div>
 
@@ -155,6 +166,38 @@
           <button id="btnCompareDatasets" class="btn btn-primary btn-sm">Comparar selecionadas</button>
         </div>
         <div class="table-wrap" style="margin-top:14px;"><table id="compareTable" class="data-table"></table></div>
+      </div>
+    </div>
+
+    <div id="tabAproveitamento" class="tab-panel hidden">
+      <div class="panel" id="aprovColMap">
+        <div class="panel-head">
+          <div><span class="panel-title">De onde vem cada informação</span> <span class="panel-hint">detectado sozinho — troque se precisar</span></div>
+        </div>
+        <div class="aprov-colmap-grid" id="aprovColMapGrid"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div><span class="panel-title">Filtros</span></div></div>
+        <div class="filters" id="aprovFilters"></div>
+      </div>
+
+      <div id="aprovKpis" class="kpi-strip"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div><span class="panel-title">Texto pronto pra compartilhar</span></div>
+          <button id="btnCopyAprov" class="btn btn-ghost btn-sm">Copiar</button>
+        </div>
+        <pre id="aprovTexto" class="aprov-texto"></pre>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div><span class="panel-title">Gerar todos os cruzamentos</span> <span class="panel-hint">um bloco por tipo de veículo, com e sem rastreador — respeita os filtros de Empresa/Mês/Região acima</span></div>
+          <button id="btnGerarCruzamentos" class="btn btn-primary btn-sm">Gerar</button>
+        </div>
+        <pre id="aprovCruzamentos" class="aprov-texto"></pre>
       </div>
     </div>
   </section>
