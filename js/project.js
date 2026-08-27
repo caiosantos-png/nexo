@@ -5,12 +5,12 @@
    ============================================================ */
 
 const PALETTE = {
-  alert: '#E4483C', signal: '#34C3B5', warn: '#F0A93B', grid: '#212B38', text: '#7C8794',
+  alert: '#E4483C', signal: '#34C3B5', warn: '#F0A93B', grid: '#232F3D', text: '#AAB6C4',
   bars: ['#34C3B5','#F0A93B','#E4483C','#5B8DEF','#B075E5','#EC6BA0','#6FCF97','#F2994A','#56CCF2','#F5D033']
 };
 Chart.defaults.font.family = "'IBM Plex Mono', monospace";
 Chart.defaults.color = PALETTE.text;
-Chart.defaults.font.size = 11;
+Chart.defaults.font.size = 11.5;
 Chart.register(ChartDataLabels);
 Chart.defaults.set('plugins.datalabels', { display: false });
 const LABEL_ON_DARK = { display:true, color:'#fff', font:{weight:'700', size:11}, textStrokeColor:'rgba(0,0,0,.55)', textStrokeWidth:3 };
@@ -22,7 +22,8 @@ const state = {
   datasets: [], columns: [], records: [],
   charts: {}, slideCharts: {}, currentSlide: 0, slideDefs: [],
   currentAnalysis: null,
-  dataPage: 0, dataPageSize: 50, dataSearch: ''
+  dataPage: 0, dataPageSize: 50, dataSearch: '',
+  selectedDatasetIds: null // null = "Todas"; senão, um Set de dataset_id
 };
 
 function uuid(){
@@ -86,22 +87,33 @@ document.getElementById('btnSaveSettings').addEventListener('click', async () =>
   const nome = document.getElementById('setNome').value.trim();
   const cor = document.getElementById('setCor').value;
   const errEl = document.getElementById('settingsError');
+  errEl.classList.add('hidden');
   if(!nome){ errEl.textContent = 'Dê um nome pro projeto.'; errEl.classList.remove('hidden'); return; }
 
   const btn = document.getElementById('btnSaveSettings');
   btn.disabled = true;
-  try{
-    const tema = { ...(state.project.tema || {}), cor };
-    if(pendingLogoFile === 'remove'){
-      delete tema.logoUrl;
-    }else if(pendingLogoFile){
+  const tema = { ...(state.project.tema || {}), cor };
+  let avisoLogo = '';
+
+  if(pendingLogoFile === 'remove'){
+    delete tema.logoUrl;
+  }else if(pendingLogoFile){
+    try{
       const path = `${state.user.id}/${state.project.id}/logo_${Date.now()}_${sanitizeFileName(pendingLogoFile.name)}`;
       const { error: upErr } = await state.client.storage.from('branding').upload(path, pendingLogoFile, { upsert: true });
       if(upErr) throw upErr;
       const { data: pub } = state.client.storage.from('branding').getPublicUrl(path);
       tema.logoUrl = pub.publicUrl;
+    }catch(e){
+      console.error('Falha no upload do logo:', e);
+      const msg = (e.message || String(e));
+      avisoLogo = /bucket|not found/i.test(msg)
+        ? 'O logo não foi salvo: falta rodar o "schema-update-branding.sql" no seu Supabase. O nome e a cor foram salvos normalmente.'
+        : 'O logo não foi salvo (' + msg + '). O nome e a cor foram salvos normalmente.';
     }
+  }
 
+  try{
     const { data, error } = await state.client.from('projects').update({ nome, tema }).eq('id', state.project.id).select().single();
     if(error) throw error;
 
@@ -109,6 +121,12 @@ document.getElementById('btnSaveSettings').addEventListener('click', async () =>
     document.getElementById('projectName').textContent = data.nome;
     applyProjectTheme(data);
     if(state.currentAnalysis) renderDashboard();
+    if(avisoLogo){
+      errEl.textContent = avisoLogo;
+      errEl.classList.remove('hidden');
+      btn.disabled = false;
+      return;
+    }
     settingsModal.classList.add('hidden');
   }catch(e){
     errEl.textContent = 'Erro ao salvar: ' + (e.message || e);
@@ -335,15 +353,95 @@ async function loadDashboard(){
   state.columns = columns || [];
   state.records = records || [];
 
-  const sel = document.getElementById('filterDataset');
-  sel.innerHTML = '<option value="">Todas</option>' + state.datasets.map(d => `<option value="${d.id}">${d.rotulo || d.nome_aba}</option>`).join('');
-  sel.onchange = renderDashboard;
+  populateDatasetMultiselect();
 
   const targetSel = document.getElementById('newRecordTarget');
   targetSel.innerHTML = state.datasets.map(d => `<option value="${d.id}">${d.rotulo || d.nome_aba}</option>`).join('');
 
   document.getElementById('dashboardSection').classList.remove('hidden');
   renderDashboard();
+}
+
+// ----------------------------------------------------------------
+// FILTRO DE PLANILHA — multi-seleção com busca por palavra
+// state.selectedDatasetIds === null  → todas selecionadas
+// ----------------------------------------------------------------
+function populateDatasetMultiselect(){
+  state.selectedDatasetIds = null; // reset pra "Todas" a cada carga do projeto
+  renderDatasetChecklistFilter();
+  updateDatasetMultiselectLabel();
+}
+
+function activeDatasetIds(){
+  return state.selectedDatasetIds === null ? state.datasets.map(d => d.id) : [...state.selectedDatasetIds];
+}
+
+function updateDatasetMultiselectLabel(){
+  const btn = document.getElementById('datasetMultiselectBtn');
+  if(state.selectedDatasetIds === null){ btn.textContent = 'Todas'; return; }
+  const n = state.selectedDatasetIds.size;
+  if(n === 0){ btn.textContent = 'Nenhuma selecionada'; return; }
+  if(n === 1){ btn.textContent = datasetLabel([...state.selectedDatasetIds][0]); return; }
+  btn.textContent = `${n} selecionadas`;
+}
+
+function renderDatasetChecklistFilter(){
+  const termo = (document.getElementById('datasetSearchInput')?.value || '').toLowerCase().trim();
+  const palavras = termo.split(/\s+/).filter(Boolean);
+  const list = document.getElementById('datasetCheckList');
+  const visiveis = state.datasets.filter(d => {
+    const label = (d.rotulo || d.nome_aba || '').toLowerCase();
+    return palavras.every(p => label.includes(p));
+  });
+  if(!visiveis.length){ list.innerHTML = '<div class="ms-empty">Nenhuma planilha bate com a busca.</div>'; return; }
+  const checkedSet = state.selectedDatasetIds; // null = tudo marcado
+  list.innerHTML = visiveis.map(d => `
+    <label><input type="checkbox" class="ds-check" value="${d.id}" ${checkedSet === null || checkedSet.has(d.id) ? 'checked' : ''}>
+      ${d.rotulo || d.nome_aba}</label>`).join('');
+  list.querySelectorAll('.ds-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      // primeira mudança sai do modo "Todas" (null) e vira um Set explícito com tudo que já estava marcado
+      if(state.selectedDatasetIds === null) state.selectedDatasetIds = new Set(state.datasets.map(d => d.id));
+      if(cb.checked) state.selectedDatasetIds.add(cb.value); else state.selectedDatasetIds.delete(cb.value);
+      if(state.selectedDatasetIds.size === state.datasets.length) state.selectedDatasetIds = null; // tudo marcado de novo = "Todas"
+      updateDatasetMultiselectLabel();
+      onDatasetFilterChanged();
+    });
+  });
+}
+
+document.getElementById('datasetSearchInput').addEventListener('input', renderDatasetChecklistFilter);
+document.getElementById('btnDatasetSelectAll').addEventListener('click', () => {
+  const termo = (document.getElementById('datasetSearchInput').value || '').toLowerCase().trim();
+  const palavras = termo.split(/\s+/).filter(Boolean);
+  const visiveisIds = state.datasets.filter(d => palavras.every(p => (d.rotulo||d.nome_aba||'').toLowerCase().includes(p))).map(d=>d.id);
+  if(state.selectedDatasetIds === null) state.selectedDatasetIds = new Set();
+  visiveisIds.forEach(id => state.selectedDatasetIds.add(id));
+  if(state.selectedDatasetIds.size === state.datasets.length) state.selectedDatasetIds = null;
+  renderDatasetChecklistFilter(); updateDatasetMultiselectLabel(); onDatasetFilterChanged();
+});
+document.getElementById('btnDatasetSelectNone').addEventListener('click', () => {
+  state.selectedDatasetIds = new Set();
+  renderDatasetChecklistFilter(); updateDatasetMultiselectLabel(); onDatasetFilterChanged();
+});
+
+document.getElementById('datasetMultiselectBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  document.getElementById('datasetMultiselectPanel').classList.toggle('hidden');
+});
+document.addEventListener('click', e => {
+  const panel = document.getElementById('datasetMultiselectPanel');
+  if(!panel.classList.contains('hidden') && !panel.contains(e.target) && e.target.id !== 'datasetMultiselectBtn'){
+    panel.classList.add('hidden');
+  }
+});
+
+function onDatasetFilterChanged(){
+  renderDashboard();
+  const ativa = document.querySelector('.tab-nav-inline .tab-btn.active')?.dataset.tab;
+  if(ativa === 'tabDados') renderDataTable();
+  if(ativa === 'tabComparativo') renderComparativoTab();
+  if(ativa === 'tabAproveitamento') renderAproveitamentoTab();
 }
 
 function mergedColumnsFor(datasetIds){
@@ -354,8 +452,7 @@ function mergedColumnsFor(datasetIds){
 }
 
 function renderDashboard(){
-  const filterId = document.getElementById('filterDataset').value;
-  const datasetIds = filterId ? [filterId] : state.datasets.map(d => d.id);
+  const datasetIds = activeDatasetIds();
   const records = state.records.filter(r => datasetIds.includes(r.dataset_id));
   const columns = mergedColumnsFor(datasetIds);
 
@@ -385,14 +482,14 @@ document.querySelector('.tab-nav-inline').addEventListener('click', e => {
   document.getElementById(btn.dataset.tab).classList.remove('hidden');
   if(btn.dataset.tab === 'tabDados') renderDataTable();
   if(btn.dataset.tab === 'tabComparativo') renderComparativoTab();
+  if(btn.dataset.tab === 'tabAproveitamento') renderAproveitamentoTab();
 });
 
 // ----------------------------------------------------------------
 // ABA DADOS — incluir, editar, excluir registros e colunas
 // ----------------------------------------------------------------
 function currentDatasetIds(){
-  const filterId = document.getElementById('filterDataset').value;
-  return filterId ? [filterId] : state.datasets.map(d => d.id);
+  return activeDatasetIds();
 }
 function datasetLabel(id){
   const d = state.datasets.find(d => d.id === id);
@@ -1045,3 +1142,204 @@ async function exportPptx(a){
 
   pptx.writeFile({ fileName: `${state.project.nome.replace(/\s+/g,'-').toLowerCase()}-${new Date().toISOString().slice(0,10)}.pptx` });
 }
+
+// ----------------------------------------------------------------
+// ABA APROVEITAMENTO — total de eventos, recuperação e valor FIPE,
+// com filtros (tipo de veículo, empresa, rastreadores, mês, região)
+// e textos prontos pra compartilhar
+// ----------------------------------------------------------------
+function fmtMoney2(n){ return 'R$ ' + (n||0).toLocaleString('pt-BR', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+function fmtPct2(n){ return (n||0).toLocaleString('pt-BR', { minimumFractionDigits:2, maximumFractionDigits:2 }) + '%'; }
+
+function findColByPattern(columns, tipos, patterns){
+  const cands = columns.filter(c => tipos.includes(c.tipo_detectado));
+  for(const p of patterns){ const f = cands.find(c => p.test(c.nome_coluna)); if(f) return f.nome_coluna; }
+  return '';
+}
+function detectAprovColumns(columns){
+  return {
+    recuperado: findColByPattern(columns, ['booleano'], [/recuper/i]),
+    valor: findColByPattern(columns, ['numero'], [/fipe|valor/i]),
+    tipoVeiculo: findColByPattern(columns, ['categoria'], [/tipo.*ve[ií]culo/i, /^tipo$/i]),
+    equipamentos: findColByPattern(columns, ['numero'], [/rastreador|equipamento/i]),
+    regiao: findColByPattern(columns, ['categoria'], [/regi[ãa]o|cidade|munic[ií]pio|^uf$/i]),
+    empresa: findColByPattern(columns, ['categoria'], [/empresa|cliente/i]),
+    data: findColByPattern(columns, ['data'], [/./])
+  };
+}
+
+let aprovColMap = null;
+
+function renderAproveitamentoTab(){
+  const datasetIds = currentDatasetIds();
+  const columns = mergedColumnsFor(datasetIds);
+  if(!aprovColMap) aprovColMap = detectAprovColumns(columns);
+
+  const grid = document.getElementById('aprovColMapGrid');
+  const fields = [
+    { key:'recuperado', label:'Coluna de recuperação (Sim/Não)', tipos:['booleano'] },
+    { key:'valor', label:'Coluna de valor (FIPE)', tipos:['numero'] },
+    { key:'tipoVeiculo', label:'Coluna de tipo de veículo', tipos:['categoria'] },
+    { key:'equipamentos', label:'Coluna de qtd. de rastreadores', tipos:['numero'] },
+    { key:'empresa', label:'Coluna de empresa/cliente', tipos:['categoria'] },
+    { key:'regiao', label:'Coluna de região/cidade', tipos:['categoria'] },
+  ];
+  grid.innerHTML = fields.map(f => {
+    const opts = columns.filter(c => f.tipos.includes(c.tipo_detectado));
+    return `<div><label>${f.label}</label><select data-key="${f.key}" class="aprov-colmap-field">
+      <option value="">— nenhuma —</option>
+      ${opts.map(c => `<option value="${c.nome_coluna}" ${c.nome_coluna===aprovColMap[f.key]?'selected':''}>${c.nome_coluna}</option>`).join('')}
+    </select></div>`;
+  }).join('');
+  grid.querySelectorAll('.aprov-colmap-field').forEach(el => {
+    el.addEventListener('change', () => { aprovColMap[el.dataset.key] = el.value; renderAprovFilters(); });
+  });
+
+  renderAprovFilters();
+}
+
+// separa "ÁLAMO - RJ" / "ÁLAMO - SP" como uma empresa só ("ÁLAMO") — sem isso,
+// cada região virava uma opção de filtro diferente e o total por empresa não fechava
+function grupoChave(v){ return String(v).split(' - ')[0].trim(); }
+
+function renderAprovFilters(){
+  const datasetIds = currentDatasetIds();
+  const records = state.records.filter(r => datasetIds.includes(r.dataset_id));
+  const box = document.getElementById('aprovFilters');
+
+  function optionsAgrupadas(colKey){
+    const col = aprovColMap[colKey];
+    if(!col) return [];
+    const raw = records.map(r => r.dados[col]).filter(v => v !== '' && v != null);
+    return [...new Set(raw.map(grupoChave))].sort();
+  }
+  function options(colKey){
+    const col = aprovColMap[colKey];
+    if(!col) return [];
+    return [...new Set(records.map(r => r.dados[col]).filter(v => v !== '' && v != null))].sort();
+  }
+  const meses = aprovColMap.data ? [...new Set(records.map(r => (r.dados[aprovColMap.data]||'').slice(0,7)).filter(m => /^\d{4}-\d{2}$/.test(m)))].sort() : [];
+
+  const equipVals = options('equipamentos');
+  const temSemRastreador = aprovColMap.equipamentos && records.some(r => {
+    const v = r.dados[aprovColMap.equipamentos];
+    return v === '' || v == null || Number(v) === 0;
+  });
+  const rastreadorOpts = equipVals.filter(v => Number(v) !== 0).map(v => ({ value:String(v), label:`${v} equipamento(s)` }));
+  if(temSemRastreador) rastreadorOpts.unshift({ value:'__sem__', label:'Sem rastreadores' });
+
+  const defs = [
+    { id:'aprovTipo', label:'Tipo de veículo', opts: optionsAgrupadas('tipoVeiculo') },
+    { id:'aprovEmpresa', label:'Empresa', opts: optionsAgrupadas('empresa') },
+    { id:'aprovRastreadores', label:'Rastreadores', opts: rastreadorOpts },
+    { id:'aprovMes', label:'Mês/Ano', opts: meses.map(m => ({ value:m, label:fmtMonthLabel(m) })) },
+    { id:'aprovRegiao', label:'Região', opts: optionsAgrupadas('regiao') },
+  ];
+  box.innerHTML = defs.map(d => `
+    <div class="filter-group">
+      <label>${d.label}</label>
+      <select id="${d.id}"><option value="">Todos</option>
+        ${d.opts.map(o => typeof o === 'object' ? `<option value="${o.value}">${o.label}</option>` : `<option value="${o}">${o}</option>`).join('')}
+      </select>
+    </div>`).join('');
+  box.querySelectorAll('select').forEach(el => el.addEventListener('change', renderAprovResult));
+  renderAprovResult();
+}
+
+function filterAprovRecords(extra){
+  extra = extra || {};
+  const datasetIds = currentDatasetIds();
+  let records = state.records.filter(r => datasetIds.includes(r.dataset_id));
+  const tipo = 'aprovTipo' in extra ? extra.aprovTipo : document.getElementById('aprovTipo')?.value;
+  const empresa = 'aprovEmpresa' in extra ? extra.aprovEmpresa : document.getElementById('aprovEmpresa')?.value;
+  const rastreadores = 'aprovRastreadores' in extra ? extra.aprovRastreadores : document.getElementById('aprovRastreadores')?.value;
+  const mes = 'aprovMes' in extra ? extra.aprovMes : document.getElementById('aprovMes')?.value;
+  const regiao = 'aprovRegiao' in extra ? extra.aprovRegiao : document.getElementById('aprovRegiao')?.value;
+
+  if(tipo && aprovColMap.tipoVeiculo) records = records.filter(r => grupoChave(r.dados[aprovColMap.tipoVeiculo]) === tipo);
+  if(empresa && aprovColMap.empresa) records = records.filter(r => grupoChave(r.dados[aprovColMap.empresa]) === empresa);
+  if(rastreadores !== undefined && rastreadores !== '' && aprovColMap.equipamentos){
+    if(rastreadores === '__sem__') records = records.filter(r => { const v = r.dados[aprovColMap.equipamentos]; return v === '' || v == null || Number(v) === 0; });
+    else records = records.filter(r => String(r.dados[aprovColMap.equipamentos]) === rastreadores);
+  }
+  if(mes && aprovColMap.data) records = records.filter(r => String(r.dados[aprovColMap.data]||'').startsWith(mes));
+  if(regiao && aprovColMap.regiao) records = records.filter(r => grupoChave(r.dados[aprovColMap.regiao]) === regiao);
+  return records;
+}
+
+function computeAproveitamento(records){
+  const total = records.length;
+  const recuperados = aprovColMap.recuperado ? records.filter(r => toBool(r.dados[aprovColMap.recuperado])).length : 0;
+  const naoRecuperados = total - recuperados;
+  const aproveitamento = total ? recuperados/total*100 : 0;
+  let fipeTotal = 0, fipeRecuperado = 0;
+  if(aprovColMap.valor){
+    records.forEach(r => {
+      const v = toNumber(r.dados[aprovColMap.valor]);
+      if(v === null) return;
+      fipeTotal += v;
+      if(aprovColMap.recuperado && toBool(r.dados[aprovColMap.recuperado])) fipeRecuperado += v;
+    });
+  }
+  const fipeNaoRecuperado = fipeTotal - fipeRecuperado;
+  const aproveitamentoFipe = fipeTotal ? fipeRecuperado/fipeTotal*100 : 0;
+  return { total, recuperados, naoRecuperados, aproveitamento, fipeTotal, fipeRecuperado, fipeNaoRecuperado, aproveitamentoFipe };
+}
+
+function statsToTexto(stats, titulo, tipoLabel){
+  const tl = tipoLabel ? tipoLabel.toLowerCase() : 'veículo';
+  return `*${titulo}*\nTotal de roubos: ${stats.total}\nTotal de recuperações: ${stats.recuperados}\nAproveitamento geral: ${fmtPct2(stats.aproveitamento)}\nFipe ${tl} roubado: ${fmtMoney2(stats.fipeTotal)}\nFipe ${tl} recuperado: ${fmtMoney2(stats.fipeRecuperado)}\nFipe ${tl} não recuperado: ${fmtMoney2(stats.fipeNaoRecuperado)}\nAproveitamento geral fipe: ${fmtPct2(stats.aproveitamentoFipe)}`;
+}
+
+function renderAprovResult(){
+  const records = filterAprovRecords();
+  const stats = computeAproveitamento(records);
+
+  document.getElementById('aprovKpis').innerHTML = [
+    ['Total de eventos', stats.total.toLocaleString('pt-BR')],
+    ['Total de recuperações', stats.recuperados.toLocaleString('pt-BR')],
+    ['Total de não recuperados', stats.naoRecuperados.toLocaleString('pt-BR')],
+    ['Aproveitamento geral', fmtPct2(stats.aproveitamento)],
+    ['Fipe total', fmtMoney2(stats.fipeTotal)],
+    ['Fipe recuperado', fmtMoney2(stats.fipeRecuperado)],
+    ['Fipe não recuperado', fmtMoney2(stats.fipeNaoRecuperado)],
+    ['Aproveitamento geral fipe', fmtPct2(stats.aproveitamentoFipe)],
+  ].map(([label,value]) => `<div class="kpi-card"><span class="kpi-label">${label}</span><span class="kpi-value" style="font-size:19px;">${value}</span></div>`).join('');
+
+  const tipoSel = document.getElementById('aprovTipo')?.value;
+  const empresaSel = document.getElementById('aprovEmpresa')?.value;
+  const mesSel = document.getElementById('aprovMes')?.value;
+  const tituloPartes = [tipoSel, empresaSel, mesSel ? fmtMonthLabel(mesSel) : ''].filter(Boolean).map(s=>s.toUpperCase());
+  const titulo = tituloPartes.length ? tituloPartes.join(' - ') : 'RESUMO GERAL';
+  document.getElementById('aprovTexto').textContent = statsToTexto(stats, titulo, tipoSel);
+}
+
+document.getElementById('btnCopyAprov').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('aprovTexto').textContent);
+  const btn = document.getElementById('btnCopyAprov');
+  const original = btn.textContent; btn.textContent = 'Copiado!';
+  setTimeout(() => btn.textContent = original, 1500);
+});
+
+document.getElementById('btnGerarCruzamentos').addEventListener('click', () => {
+  if(!aprovColMap.tipoVeiculo){ alert('Mapeie a coluna de "Tipo de veículo" acima primeiro.'); return; }
+  const datasetIds = currentDatasetIds();
+  const baseRecords = state.records.filter(r => datasetIds.includes(r.dataset_id));
+  const tipos = [...new Set(baseRecords.map(r => grupoChave(r.dados[aprovColMap.tipoVeiculo])).filter(Boolean))];
+  const empresaSel = document.getElementById('aprovEmpresa')?.value;
+  const mesSel = document.getElementById('aprovMes')?.value;
+
+  const blocos = [];
+  tipos.forEach(tipo => {
+    const tituloBase = [tipo, empresaSel, mesSel ? fmtMonthLabel(mesSel) : ''].filter(Boolean).join(' - ').toUpperCase();
+    const recFull = filterAprovRecords({ aprovTipo: tipo, aprovEmpresa: empresaSel||'', aprovMes: mesSel||'', aprovRastreadores:'', aprovRegiao: document.getElementById('aprovRegiao')?.value||'' });
+    blocos.push(statsToTexto(computeAproveitamento(recFull), tituloBase, tipo));
+
+    if(aprovColMap.equipamentos){
+      const tituloSemRastreador = [tipo, empresaSel, 'SEM RASTREADOR'].filter(Boolean).join(' - ').toUpperCase();
+      const recSem = filterAprovRecords({ aprovTipo: tipo, aprovEmpresa: empresaSel||'', aprovMes: mesSel||'', aprovRastreadores:'__sem__', aprovRegiao: document.getElementById('aprovRegiao')?.value||'' });
+      blocos.push(statsToTexto(computeAproveitamento(recSem), tituloSemRastreador, tipo));
+    }
+  });
+  document.getElementById('aprovCruzamentos').textContent = blocos.join('\n' + '-'.repeat(50) + '\n');
+});
