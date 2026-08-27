@@ -14,7 +14,7 @@ function detectHeaderRow(rows){
   return bestIdx;
 }
 
-const SHEET_EXCLUDE_KEYWORDS = ['RESUMO','ÍNDICE','INDICE','NÃO ACIONAD','NAO ACIONAD'];
+const SHEET_EXCLUDE_KEYWORDS = ['RESUMO','ÍNDICE','INDICE','NÃO ACIONAD','NAO ACIONAD','FIPE'];
 
 function guessRotuloFromSheetName(name){
   return name.replace(/^\d+[_\-\s]*/,'').trim() || name;
@@ -106,8 +106,14 @@ function parseWorkbook(arrayBuffer){
       isReport = true;
     }else{
       const headerIdx = detectHeaderRow(rows);
-      headers = (rows[headerIdx] || []).map(h => String(h).trim()).filter(Boolean);
-      dataRows = rows.slice(headerIdx + 1).filter(r => r.some(c => c !== '' && c !== null && c !== undefined));
+      const rawHeader = rows[headerIdx] || [];
+      // mantém o alinhamento com as colunas originais: um cabeçalho em branco
+      // no MEIO da planilha vira "Coluna N" em vez de simplesmente sumir da
+      // lista (o que empurrava os dados das colunas seguintes pro nome errado)
+      let lastNonEmpty = -1;
+      rawHeader.forEach((h,i) => { if(String(h).trim()) lastNonEmpty = i; });
+      headers = rawHeader.slice(0, lastNonEmpty+1).map((h,i) => String(h).trim().replace(/\s+/g, ' ') || `Coluna ${i+1}`);
+      dataRows = rows.slice(headerIdx + 1).filter(r => r.slice(0, headers.length).some(c => c !== '' && c !== null && c !== undefined));
     }
 
     const excluded = SHEET_EXCLUDE_KEYWORDS.some(k => name.toUpperCase().includes(k));
@@ -118,12 +124,35 @@ function parseWorkbook(arrayBuffer){
       rotulo: guessRotuloFromSheetName(name)
     };
   }).filter(s => s.headers.length > 0);
+
+  // se a maioria das abas (não-relatório) compartilha o mesmo conjunto de
+  // colunas — comum em planilhas mensais recorrentes — uma aba com estrutura
+  // bem diferente provavelmente é resumo/referência, mesmo que o nome dela
+  // não bata com nenhuma palavra-chave de exclusão conhecida
+  const contagemPorAssinatura = {};
+  sheets.forEach(s => {
+    if(s.isReport) return;
+    const assinatura = [...s.headers].sort().join('|');
+    contagemPorAssinatura[assinatura] = (contagemPorAssinatura[assinatura] || 0) + 1;
+  });
+  const maioria = Object.entries(contagemPorAssinatura).sort((a,b) => b[1]-a[1])[0];
+  if(maioria && maioria[1] >= 2){
+    const colunasDaMaioria = new Set(maioria[0].split('|'));
+    sheets.forEach(s => {
+      if(s.isReport || !s.defaultInclude) return;
+      const sobreposicao = s.headers.filter(h => colunasDaMaioria.has(h)).length / Math.max(s.headers.length, 1);
+      if(sobreposicao < 0.4) s.defaultInclude = false; // estrutura destoante — provável resumo/referência
+    });
+  }
+
+  return sheets;
 }
 
 /** Converte as linhas cruas de uma aba em registros genéricos { header: valor }. */
 function rowsToRecords(headers, dataRows, columnDefs){
   const dateColSet = new Set(columnDefs.filter(c => c.tipo_detectado === 'data').map(c => c.nome_coluna));
   const timeColSet = new Set(columnDefs.filter(c => c.tipo_detectado === 'hora').map(c => c.nome_coluna));
+  const pctColSet = new Set(columnDefs.filter(c => c.tipo_detectado === 'percentual').map(c => c.nome_coluna));
   return dataRows.map(row => {
     const dados = {};
     headers.forEach((h, idx) => {
@@ -134,6 +163,8 @@ function rowsToRecords(headers, dataRows, columnDefs){
         if(parsed) v = parsed;
       }else if(timeColSet.has(h) && typeof v === 'number'){
         v = excelFracToHHMM(v);
+      }else if(pctColSet.has(h) && typeof v === 'number'){
+        v = Math.round(v * 10000) / 100; // 0,5833952 -> 58,34
       }
       dados[h] = v;
     });
