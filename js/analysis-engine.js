@@ -51,6 +51,19 @@ function computeAnalysis(columns, records){
   metricas.forEach(m => {
     const vals = records.map(r => toNumber(r.dados[m.nome_coluna])).filter(v => v !== null);
     if(!vals.length) return;
+    if(/conting/i.test(m.nome_coluna)){
+      // "contingência" só existe de verdade quando há 2 equipamentos (o 2º é o
+      // backup) — somar o valor bruto (1+1+2+0...) não tem esse significado
+      const comContingencia = vals.filter(v => v === 2).length;
+      kpis.push({ label: `${m.nome_coluna} — com contingência (2 equip.)`, value: comContingencia, format: 'int' });
+      kpis.push({ label: `% com contingência`, value: records.length ? comContingencia/records.length*100 : 0, format: 'pct' });
+      return;
+    }
+    if(m.tipo_detectado === 'percentual'){
+      // percentual não se soma (não faz sentido somar taxas) — só a média
+      kpis.push({ label: `Média de ${m.nome_coluna}`, value: vals.reduce((a,b)=>a+b,0)/vals.length, format: 'pct' });
+      return;
+    }
     const soma = vals.reduce((a,b)=>a+b,0);
     kpis.push({ label: `Total de ${m.nome_coluna}`, value: soma, format: 'money' });
     kpis.push({ label: `Média de ${m.nome_coluna}`, value: soma/vals.length, format: 'money' });
