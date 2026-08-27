@@ -13,11 +13,11 @@ function parseDateLoose(v){
   if(typeof v === 'number'){
     if(typeof XLSX !== 'undefined' && XLSX.SSF){
       const d = XLSX.SSF.parse_date_code(v);
-      if(d && d.y > 1900 && d.y < 2200) return new Date(Date.UTC(d.y, d.m-1, d.d)).toISOString().slice(0,10);
+      if(d && d.y >= 1990 && d.y <= 2100) return new Date(Date.UTC(d.y, d.m-1, d.d)).toISOString().slice(0,10);
     }
     return null;
   }
-  const s = String(v).trim();
+  const s = String(v).trim().replace(/\s*-?\s*\d{1,2}:\d{2}(:\d{2})?\s*$/, '').trim();
   let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if(m){ let [,d,mo,y] = m; if(y.length===2) y = '20'+y; return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`; }
   m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
@@ -35,12 +35,15 @@ function parseDateLoose(v){
 function parseNumberLoose(v){
   if(v === null || v === undefined || v === '') return null;
   if(typeof v === 'number') return v;
-  let s = String(v).trim().replace(/[R$€\s]/g,'');
+  let s = String(v).trim().replace(/[R$€%\s]/g,'');
   if(!s || /[a-zA-Z]/.test(s)) return null;
   if(s.includes(',') && s.includes('.')) s = s.replace(/\./g,'').replace(',', '.');
   else if(s.includes(',')) s = s.replace(',', '.');
+  // exige que a string INTEIRA seja um número — sem isso, "04/08/2026 - 02:05"
+  // passava porque parseFloat lê só o "04" antes da barra e ignora o resto
+  if(!/^-?\d+(\.\d+)?$/.test(s)) return null;
   const n = parseFloat(s);
-  return isNaN(n) || !isFinite(n) ? null : n;
+  return isNaN(n) ? null : n;
 }
 
 const BOOLEAN_TRUE = ['sim','yes','true','1','verdadeiro'];
@@ -83,6 +86,13 @@ function analyzeColumn(header, values){
     numericVals.every(v => v >= 0 && v < 3) &&
     numericVals.some(v => v % 1 !== 0);
 
+  // coluna de PERCENTUAL (Excel guarda 58,33% como fração 0,5833...) —
+  // identificada pelo nome + valores fracionários entre -1 e 1
+  const looksLikePercent = /percentual|porcentagem|aproveitamento|taxa|^%|indice|índice/i.test(header) &&
+    numericVals.length >= filled*0.6 &&
+    numericVals.every(v => v >= -1 && v <= 1) &&
+    numericVals.some(v => v % 1 !== 0);
+
   let tipo, papel, confianca;
   if(dateScore >= 0.6){
     tipo = 'data'; papel = 'data'; confianca = dateScore;
@@ -92,6 +102,8 @@ function analyzeColumn(header, values){
     tipo = 'booleano'; papel = 'dimensao'; confianca = 1;
   }else if(looksLikeTime){
     tipo = 'hora'; papel = 'ignorar'; confianca = 0.6;
+  }else if(looksLikePercent){
+    tipo = 'percentual'; papel = 'metrica'; confianca = 0.7;
   }else if(looksLikeYear && distinct.size <= 60){
     tipo = 'categoria'; papel = 'dimensao'; confianca = 0.7;
   }else if(numScore >= 0.6){
@@ -103,6 +115,12 @@ function analyzeColumn(header, values){
     tipo = 'texto'; papel = 'identificador'; confianca = uniqueRatio;
   }else{
     tipo = 'texto'; papel = 'ignorar'; confianca = 0.3;
+  }
+
+  // ramal, telefone, CEP etc. são números mas não fazem sentido como métrica
+  // somável — viram identificador mesmo passando no teste de "número"
+  if(papel === 'metrica' && /\bramal\b|telefone|celular|\bcep\b|whatsapp/i.test(header)){
+    papel = 'identificador';
   }
 
   return {
@@ -120,7 +138,7 @@ function analyzeSheetColumns(headers, dataRows){
   return headers.map((h, idx) => analyzeColumn(h, dataRows.slice(0, 200).map(r => r[idx])));
 }
 
-const TIPO_OPTIONS = ['data','hora','numero','moeda','booleano','categoria','texto'];
+const TIPO_OPTIONS = ['data','hora','percentual','numero','moeda','booleano','categoria','texto'];
 const PAPEL_OPTIONS = ['data','metrica','dimensao','identificador','ignorar'];
 
 /** Excel guarda hora do dia como fração (0,75 = 18:00). Converte pra "HH:MM". */
