@@ -23,6 +23,7 @@ const state = {
   charts: {}, slideCharts: {}, currentSlide: 0, slideDefs: [],
   currentAnalysis: null,
   dataPage: 0, dataPageSize: 50, dataSearch: '',
+  regrasDraft: null, // cópia em edição das regras fixas de coluna (aba Regras)
   selectedDatasetIds: null // null = "Todas"; senão, um Set de dataset_id
 };
 
@@ -161,6 +162,11 @@ document.getElementById('btnSaveSettings').addEventListener('click', async () =>
   document.getElementById('projectArea').textContent = data.area || 'projeto';
   applyProjectTheme(data);
 
+  // regras fixas de coluna: as salvas no projeto ou, se ainda não houver
+  // nenhuma, o padrão que já vem no column-rules.js
+  setRegras((data.tema || {}).regrasColunas);
+  state.regrasDraft = null;
+
   const { data: existingDatasets } = await state.client.from('datasets').select('*').eq('project_id', id);
   if(existingDatasets && existingDatasets.length){
     await loadDashboard();
@@ -264,7 +270,9 @@ function renderPreview(){
               <td><select data-p="${pIdx}" data-c="${cIdx}" data-field="papel" class="prev-field">
                 ${PAPEL_OPTIONS.map(t => `<option value="${t}" ${t===c.papel?'selected':''}>${t}</option>`).join('')}
               </select></td>
-              <td><span class="badge ${c.confianca>=0.7?'badge-ok':c.confianca>=0.4?'badge-warn':'badge-low'}">${Math.round(c.confianca*100)}%</span></td>
+              <td>${c.origem === 'regra'
+                ? `<span class="badge badge-rule" title="Definido pela regra fixa &quot;${c.regra_nome}&quot; (aba Regras)">regra</span>`
+                : `<span class="badge ${c.confianca>=0.7?'badge-ok':c.confianca>=0.4?'badge-warn':'badge-low'}">${Math.round(c.confianca*100)}%</span>`}</td>
               <td>${c.vazios || '—'}</td>
               <td style="color:var(--text-muted); max-width:220px; overflow:hidden; text-overflow:ellipsis;">${c.amostra.join(', ')}</td>
             </tr>`).join('')}
@@ -360,6 +368,7 @@ async function loadDashboard(){
 
   document.getElementById('dashboardSection').classList.remove('hidden');
   renderDashboard();
+  renderFixDatesBanner();
 }
 
 // ----------------------------------------------------------------
@@ -465,6 +474,7 @@ function renderDashboard(){
   document.getElementById('btnPresent').disabled = !hasData;
   document.getElementById('btnExportPdf').disabled = !hasData;
   document.getElementById('btnExportPptx').disabled = !hasData;
+  document.getElementById('btnExportXlsx').disabled = !hasData;
 
   if(document.querySelector('.tab-nav-inline .tab-btn[data-tab="tabDados"]').classList.contains('active')) renderDataTable();
   if(document.querySelector('.tab-nav-inline .tab-btn[data-tab="tabComparativo"]').classList.contains('active')) renderComparativoTab();
@@ -483,6 +493,7 @@ document.querySelector('.tab-nav-inline').addEventListener('click', e => {
   if(btn.dataset.tab === 'tabDados') renderDataTable();
   if(btn.dataset.tab === 'tabComparativo') renderComparativoTab();
   if(btn.dataset.tab === 'tabAproveitamento') renderAproveitamentoTab();
+  if(btn.dataset.tab === 'tabRegras') renderRegrasTab();
 });
 
 // ----------------------------------------------------------------
@@ -503,13 +514,25 @@ function columnInputType(col){
 }
 
 document.getElementById('btnToggleColumns').addEventListener('click', () => {
-  document.getElementById('columnsBody').classList.toggle('hidden');
+  const escondido = document.getElementById('columnsBody').classList.toggle('hidden');
+  document.getElementById('btnToggleColumns').textContent = escondido ? 'mostrar' : 'ocultar';
+  document.getElementById('columnsSummary').classList.toggle('hidden', !escondido);
 });
 
 function renderColumnsPanel(){
   const datasetIds = currentDatasetIds();
   const columns = mergedColumnsFor(datasetIds);
   const table = document.getElementById('columnsTable');
+
+  // resumo pra o painel não parecer vazio quando está recolhido
+  const resumo = document.getElementById('columnsSummary');
+  if(resumo){
+    const conta = papel => columns.filter(c => c.papel === papel).length;
+    resumo.textContent = columns.length
+      ? `${columns.length} colunas · ${conta('dimensao')} dimensões · ${conta('metrica')} métricas · ${conta('data')} datas · ${conta('identificador')} identificadores · ${conta('ignorar')} ignoradas`
+      : 'Nenhuma coluna nesta seleção.';
+    resumo.classList.toggle('hidden', !document.getElementById('columnsBody').classList.contains('hidden'));
+  }
   table.innerHTML = '<thead><tr><th>Coluna</th><th>Tipo</th><th>Papel</th><th></th></tr></thead><tbody>' +
     columns.map((c,i) => `
       <tr>
@@ -545,6 +568,7 @@ document.getElementById('btnDataPrev').addEventListener('click', () => { if(stat
 document.getElementById('btnDataNext').addEventListener('click', () => { state.dataPage++; renderDataTable(); });
 
 function renderDataTable(){
+  renderDatasetsPanel();
   renderColumnsPanel();
   const table = document.getElementById('dataTable');
   const datasetIds = currentDatasetIds();
@@ -571,6 +595,13 @@ function renderDataTable(){
       if(isHoraCol && typeof val === 'number' && val >= 0 && val < 3){
         val = excelFracToHHMM(val);
         type = 'text'; // input numérico/data não aceita "HH:MM" como valor
+      }
+      // valor de data continua sendo editado como data mesmo quando a coluna
+      // foi classificada como categoria/dimensão (e serial cru vira data aqui)
+      if(ehDataISO(val)) type = 'date';
+      else if(nomeParecaDeData(c.nome_coluna) && ehSerialDeDataExcel(val)){
+        const iso = excelSerialParaISO(val);
+        if(iso){ val = iso; type = 'date'; }
       }
       if(type === 'checkbox'){
         return `<td><input type="checkbox" data-id="${r.id}" data-col="${c.nome_coluna}" class="edit-field" ${toBool(val)?'checked':''}></td>`;
@@ -685,7 +716,13 @@ function renderComparativoTab(){
 function renderMonthTable(){
   const table = document.getElementById('monthTable');
   const dateCol = document.getElementById('monthDateSelect').value;
-  if(!dateCol){ table.innerHTML = '<tbody><tr><td style="color:var(--text-muted);">Nenhuma coluna de data detectada ainda.</td></tr></tbody>'; return; }
+  if(!dateCol){
+    table.innerHTML = `<tbody><tr><td><div class="empty-tab"><strong>Nenhuma coluna com o papel "data" nesta seleção</strong>
+      <span>O mês a mês precisa de pelo menos uma coluna marcada como <em>data</em>. Se alguma coluna de data
+      virou "categoria" (por uma regra fixa ou pela detecção), troque o papel dela para <em>data</em> na aba
+      <strong>Regras</strong> ou em "Colunas desta seleção", na aba Dados.</span></div></td></tr></tbody>`;
+    return;
+  }
 
   const datasetIds = currentDatasetIds();
   const records = state.records.filter(r => datasetIds.includes(r.dataset_id));
@@ -788,7 +825,7 @@ function renderKpis(a){
   const strip = document.getElementById('kpiStrip');
   strip.innerHTML = a.kpis.map(k => `
     <div class="kpi-card">
-      <span class="kpi-label">${k.label}</span>
+      <span class="kpi-label" title="${String(k.label).replace(/"/g,'&quot;')}">${k.label}</span>
       <span class="kpi-value">${k.format==='money' ? fmtMoney(k.value) : k.format==='pct' ? k.value.toFixed(0)+'%' : k.value.toLocaleString('pt-BR')}</span>
     </div>`).join('');
 }
@@ -1183,12 +1220,21 @@ function renderAproveitamentoTab(){
     { key:'equipamentos', label:'Coluna de qtd. de rastreadores', tipos:['numero'] },
     { key:'empresa', label:'Coluna de empresa/cliente', tipos:['categoria'] },
     { key:'regiao', label:'Coluna de região/cidade', tipos:['categoria'] },
+    { key:'data', label:'Coluna de data (filtro Mês/Ano)', tipos:['data'] },
   ];
+  // Antes o menu só listava colunas do tipo "certo" — então uma coluna como
+  // FINALIZADO (categoria SIM/EM ANDAMENTO) não podia ser escolhida como
+  // recuperação e o campo ficava travado em "— nenhuma —". Agora lista TODAS,
+  // com as do tipo esperado em cima.
+  const opt = (c, sel) => `<option value="${c.nome_coluna}" ${c.nome_coluna===sel?'selected':''}>${c.nome_coluna}</option>`;
   grid.innerHTML = fields.map(f => {
-    const opts = columns.filter(c => f.tipos.includes(c.tipo_detectado));
+    const sel = aprovColMap[f.key];
+    const recomendadas = columns.filter(c => f.tipos.includes(c.tipo_detectado));
+    const outras = columns.filter(c => !f.tipos.includes(c.tipo_detectado) && c.papel !== 'ignorar');
     return `<div><label>${f.label}</label><select data-key="${f.key}" class="aprov-colmap-field">
       <option value="">— nenhuma —</option>
-      ${opts.map(c => `<option value="${c.nome_coluna}" ${c.nome_coluna===aprovColMap[f.key]?'selected':''}>${c.nome_coluna}</option>`).join('')}
+      ${recomendadas.length ? `<optgroup label="recomendadas">${recomendadas.map(c => opt(c, sel)).join('')}</optgroup>` : ''}
+      ${outras.length ? `<optgroup label="outras colunas">${outras.map(c => opt(c, sel)).join('')}</optgroup>` : ''}
     </select></div>`;
   }).join('');
   grid.querySelectorAll('.aprov-colmap-field').forEach(el => {
@@ -1295,6 +1341,20 @@ function renderAprovResult(){
   const records = filterAprovRecords();
   const stats = computeAproveitamento(records);
 
+  // sem a coluna de recuperação mapeada os números vêm todos zerados —
+  // melhor dizer o que fazer do que mostrar uma aba com zeros sem explicação
+  const aviso = document.getElementById('aprovAviso');
+  if(aviso){
+    if(!aprovColMap.recuperado){
+      aviso.innerHTML = `<div class="empty-tab"><strong>Falta dizer qual coluna marca a recuperação</strong>
+        <span>Escolha em "Coluna de recuperação (Sim/Não)" ali em cima — normalmente é a coluna FINALIZADO
+        ou RECUPERADO. Sem ela o aproveitamento fica em 0%, porque o sistema não sabe o que contar como recuperado.</span></div>`;
+      aviso.classList.remove('hidden');
+    }else{
+      aviso.classList.add('hidden');
+    }
+  }
+
   document.getElementById('aprovKpis').innerHTML = [
     ['Total de eventos', stats.total.toLocaleString('pt-BR')],
     ['Total de recuperações', stats.recuperados.toLocaleString('pt-BR')],
@@ -1342,4 +1402,413 @@ document.getElementById('btnGerarCruzamentos').addEventListener('click', () => {
     }
   });
   document.getElementById('aprovCruzamentos').textContent = blocos.join('\n' + '-'.repeat(50) + '\n');
+});
+
+// ----------------------------------------------------------------
+// ABA REGRAS — classificação fixa de coluna (editável e persistida)
+// As regras vivem em projects.tema.regrasColunas. Enquanto o usuário
+// edita, mexemos numa cópia (state.regrasDraft); só "Salvar" grava.
+// ----------------------------------------------------------------
+function regrasDraft(){
+  if(!state.regrasDraft) state.regrasDraft = getRegras().map(r => ({ ...r, apelidos: [...(r.apelidos||[])] }));
+  return state.regrasDraft;
+}
+
+function setRegrasStatus(msg, tipo){
+  const el = document.getElementById('regrasStatus');
+  el.className = 'rules-status' + (tipo ? ' ' + tipo : '');
+  el.textContent = msg || '';
+}
+
+function escapeAttr(s){
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderRegrasTab(){
+  const regras = regrasDraft();
+  const table = document.getElementById('regrasTable');
+
+  table.innerHTML =
+    '<thead><tr><th class="rule-col-name">Nome da coluna</th><th>Tipo</th><th>Papel</th>' +
+    '<th class="rule-col-alias">Outros nomes (separados por vírgula)</th><th></th></tr></thead><tbody>' +
+    regras.map((r,i) => `
+      <tr>
+        <td><input type="text" class="regra-field" data-i="${i}" data-field="nome" value="${escapeAttr(r.nome)}"></td>
+        <td><select class="regra-field" data-i="${i}" data-field="tipo">${TIPO_OPTIONS.map(t=>`<option value="${t}" ${t===r.tipo?'selected':''}>${t}</option>`).join('')}</select></td>
+        <td><select class="regra-field" data-i="${i}" data-field="papel">${PAPEL_OPTIONS.map(t=>`<option value="${t}" ${t===r.papel?'selected':''}>${t}</option>`).join('')}</select></td>
+        <td><input type="text" class="regra-field" data-i="${i}" data-field="apelidos" value="${escapeAttr((r.apelidos||[]).join(', '))}"></td>
+        <td><button class="btn-del-rule" data-i="${i}" title="Remover regra">✕</button></td>
+      </tr>`).join('') + '</tbody>';
+
+  table.querySelectorAll('.regra-field').forEach(el => {
+    el.addEventListener('change', () => {
+      const i = parseInt(el.dataset.i, 10);
+      const campo = el.dataset.field;
+      if(campo === 'apelidos'){
+        state.regrasDraft[i].apelidos = el.value.split(',').map(s => s.trim()).filter(Boolean);
+      }else{
+        state.regrasDraft[i][campo] = el.value;
+      }
+      setRegrasStatus('alterações ainda não salvas — clique em "Salvar regras"');
+      renderRegrasImpacto();
+    });
+  });
+
+  table.querySelectorAll('.btn-del-rule').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.dataset.i, 10);
+      state.regrasDraft.splice(i, 1);
+      renderRegrasTab();
+      setRegrasStatus('regra removida — clique em "Salvar regras" pra confirmar');
+    });
+  });
+
+  renderRegrasImpacto();
+}
+
+/** Mostra, coluna por coluna, o que as regras do rascunho mudariam nos dados já importados. */
+function renderRegrasImpacto(){
+  const box = document.getElementById('regrasImpacto');
+  const nomes = [...new Set(state.columns.map(c => c.nome_coluna))];
+  if(!nomes.length){
+    box.innerHTML = '<p class="ri-empty">Nenhuma planilha importada ainda — as regras vão valer na próxima importação.</p>';
+    return;
+  }
+
+  const indice = indiceDoDraft();
+  const linhas = [];
+  let jaOk = 0;
+  nomes.forEach(nome => {
+    const regra = indice[normalizarNomeColuna(nome)];
+    if(!regra) return;
+    const atuais = state.columns.filter(c => c.nome_coluna === nome);
+    const difere = atuais.some(c => c.tipo_detectado !== regra.tipo || c.papel !== regra.papel);
+    if(!difere){ jaOk++; return; }
+    const c = atuais[0];
+    linhas.push(`<div class="ri-line"><span class="ri-col">${nome}</span>
+      <span class="ri-from">${c.tipo_detectado} / ${c.papel}</span>
+      <span class="ri-to">→ ${regra.tipo} / ${regra.papel}</span></div>`);
+  });
+
+  if(!linhas.length){
+    box.innerHTML = `<p class="ri-empty">Tudo já está de acordo com as regras (${jaOk} coluna(s) cobertas por regra).</p>`;
+    return;
+  }
+  box.innerHTML = `<p style="margin:0 0 8px;">${linhas.length} coluna(s) seriam reclassificadas${jaOk ? ` · ${jaOk} já estão certas` : ''}:</p>` + linhas.join('');
+}
+
+/** Índice nome normalizado → regra, montado a partir do rascunho em edição. */
+function indiceDoDraft(){
+  const idx = {};
+  regrasDraft().forEach(r => {
+    if(!r.nome || !r.nome.trim()) return;
+    [r.nome, ...(r.apelidos||[])].forEach(k => {
+      const chave = normalizarNomeColuna(k);
+      if(chave && !(chave in idx)) idx[chave] = r;
+    });
+  });
+  return idx;
+}
+
+document.getElementById('btnAddRegra').addEventListener('click', () => {
+  regrasDraft().push({ nome: '', tipo: 'categoria', papel: 'dimensao', apelidos: [] });
+  renderRegrasTab();
+  const inputs = document.querySelectorAll('#regrasTable input[data-field="nome"]');
+  inputs[inputs.length - 1]?.focus();
+});
+
+document.getElementById('btnResetRegras').addEventListener('click', () => {
+  if(!confirm('Descartar suas regras e voltar às 16 regras padrão? (só vale depois de salvar)')) return;
+  state.regrasDraft = REGRAS_COLUNAS_PADRAO.map(r => ({ ...r, apelidos: [...(r.apelidos||[])] }));
+  renderRegrasTab();
+  setRegrasStatus('padrão restaurado no formulário — clique em "Salvar regras" pra gravar');
+});
+
+async function salvarRegras(){
+  const limpas = regrasDraft()
+    .map(r => ({ nome: (r.nome||'').trim(), tipo: r.tipo, papel: r.papel, apelidos: (r.apelidos||[]).map(a=>a.trim()).filter(Boolean) }))
+    .filter(r => r.nome);
+
+  const vistos = new Set();
+  for(const r of limpas){
+    const chave = normalizarNomeColuna(r.nome);
+    if(vistos.has(chave)) throw new Error(`Tem duas regras com o mesmo nome: "${r.nome}".`);
+    vistos.add(chave);
+  }
+
+  const tema = { ...(state.project.tema || {}), regrasColunas: limpas };
+  const { data, error } = await state.client.from('projects').update({ tema }).eq('id', state.project.id).select().single();
+  if(error) throw error;
+  state.project = data;
+  setRegras(limpas);
+  state.regrasDraft = limpas.map(r => ({ ...r, apelidos: [...r.apelidos] }));
+  return limpas;
+}
+
+document.getElementById('btnSalvarRegras').addEventListener('click', async () => {
+  const btn = document.getElementById('btnSalvarRegras');
+  btn.disabled = true;
+  setRegrasStatus('salvando...');
+  try{
+    const salvas = await salvarRegras();
+    renderRegrasTab();
+    setRegrasStatus(`${salvas.length} regra(s) salvas. Valem em todas as próximas importações deste projeto.`, 'ok');
+  }catch(e){
+    setRegrasStatus('Erro ao salvar: ' + (e.message || e), 'err');
+  }finally{
+    btn.disabled = false;
+  }
+});
+
+/** Reaplica as regras nas colunas que já estão no banco (sem reimportar). */
+document.getElementById('btnReaplicarRegras').addEventListener('click', async () => {
+  const btn = document.getElementById('btnReaplicarRegras');
+  btn.disabled = true;
+  setRegrasStatus('salvando as regras antes de aplicar...');
+  try{
+    await salvarRegras();
+
+    const datasetIds = state.datasets.map(d => d.id);
+    if(!datasetIds.length){ setRegrasStatus('Nenhuma planilha importada ainda — nada pra reaplicar.', 'ok'); return; }
+
+    const nomes = [...new Set(state.columns.map(c => c.nome_coluna))];
+    let alteradas = 0;
+    for(const nome of nomes){
+      const regra = acharRegra(nome);
+      if(!regra) continue;
+      const atuais = state.columns.filter(c => c.nome_coluna === nome && datasetIds.includes(c.dataset_id));
+      if(!atuais.length) continue;
+      if(atuais.every(c => c.tipo_detectado === regra.tipo && c.papel === regra.papel)) continue;
+
+      setRegrasStatus(`aplicando em "${nome}"...`);
+      const { error } = await state.client.from('dataset_columns')
+        .update({ tipo_detectado: regra.tipo, papel: regra.papel, confianca: 1, confirmado_por_usuario: true })
+        .in('dataset_id', datasetIds).eq('nome_coluna', nome);
+      if(error) throw error;
+
+      state.columns.forEach(c => {
+        if(c.nome_coluna === nome && datasetIds.includes(c.dataset_id)){
+          c.tipo_detectado = regra.tipo; c.papel = regra.papel; c.confianca = 1;
+        }
+      });
+      alteradas++;
+    }
+
+    renderDashboard();
+    renderRegrasImpacto();
+    setRegrasStatus(alteradas
+      ? `${alteradas} coluna(s) reclassificadas — o Painel já foi recalculado.`
+      : 'Nada a mudar: as colunas já estavam de acordo com as regras.', 'ok');
+  }catch(e){
+    setRegrasStatus('Erro ao reaplicar: ' + (e.message || e), 'err');
+  }finally{
+    btn.disabled = false;
+  }
+});
+
+// ----------------------------------------------------------------
+// MODAL DE CONFIRMAÇÃO (usado pra excluir planilha)
+// ----------------------------------------------------------------
+let _confirmResolve = null;
+function pedirConfirmacao({ titulo, mensagem, detalhe, textoOk = 'Excluir' }){
+  const modal = document.getElementById('confirmModal');
+  document.getElementById('confirmTitle').textContent = titulo || 'Confirmar';
+  document.getElementById('confirmMessage').textContent = mensagem || '';
+  const det = document.getElementById('confirmDetail');
+  if(detalhe){ det.innerHTML = detalhe; det.classList.remove('hidden'); }
+  else det.classList.add('hidden');
+  const btnOk = document.getElementById('btnConfirmOk');
+  btnOk.textContent = textoOk;
+  btnOk.disabled = false;
+  modal.classList.remove('hidden');
+  return new Promise(res => { _confirmResolve = res; });
+}
+function fecharConfirmacao(valor){
+  document.getElementById('confirmModal').classList.add('hidden');
+  if(_confirmResolve){ _confirmResolve(valor); _confirmResolve = null; }
+}
+document.getElementById('btnConfirmCancel').addEventListener('click', () => fecharConfirmacao(false));
+document.getElementById('btnConfirmClose').addEventListener('click', () => fecharConfirmacao(false));
+document.getElementById('btnConfirmOk').addEventListener('click', () => fecharConfirmacao(true));
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape' && !document.getElementById('confirmModal').classList.contains('hidden')) fecharConfirmacao(false);
+});
+
+// ----------------------------------------------------------------
+// PLANILHAS IMPORTADAS — listar e excluir
+// records e dataset_columns saem junto por ON DELETE CASCADE (schema.sql)
+// ----------------------------------------------------------------
+document.getElementById('btnToggleDatasets').addEventListener('click', () => {
+  const escondido = document.getElementById('datasetsBody').classList.toggle('hidden');
+  document.getElementById('btnToggleDatasets').textContent = escondido ? 'mostrar' : 'ocultar';
+});
+
+function renderDatasetsPanel(){
+  const box = document.getElementById('datasetsList');
+  if(!box) return;
+  if(!state.datasets.length){
+    box.innerHTML = '<p class="ds-empty">Nenhuma planilha importada ainda.</p>';
+    return;
+  }
+  const ordenados = sortedDatasetIds().map(id => state.datasets.find(d => d.id === id)).filter(Boolean);
+  box.innerHTML = ordenados.map(d => {
+    const registros = state.records.filter(r => r.dataset_id === d.id).length;
+    const colunas = state.columns.filter(c => c.dataset_id === d.id).length;
+    const quando = d.created_at ? new Date(d.created_at).toLocaleDateString('pt-BR') : '—';
+    return `<div class="ds-row">
+      <div class="ds-info">
+        <span class="ds-name">${d.rotulo || d.nome_aba}</span>
+        <span class="ds-meta">aba "${d.nome_aba}" · ${registros.toLocaleString('pt-BR')} registros · ${colunas} colunas · importada em ${quando}</span>
+      </div>
+      <button class="btn btn-danger-ghost btn-sm btn-del-dataset" data-id="${d.id}">Excluir</button>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.btn-del-dataset').forEach(btn => {
+    btn.addEventListener('click', () => excluirDataset(btn.dataset.id));
+  });
+}
+
+async function excluirDataset(datasetId){
+  const ds = state.datasets.find(d => d.id === datasetId);
+  if(!ds) return;
+  const registros = state.records.filter(r => r.dataset_id === datasetId).length;
+
+  const ok = await pedirConfirmacao({
+    titulo: 'Excluir planilha',
+    mensagem: 'Isso apaga a planilha e tudo que veio com ela. Não dá pra desfazer — só reimportando o arquivo.',
+    detalhe: `<strong>${ds.rotulo || ds.nome_aba}</strong><br>
+      <span>${registros.toLocaleString('pt-BR')} registros e ${state.columns.filter(c=>c.dataset_id===datasetId).length} colunas serão apagados</span>`,
+    textoOk: 'Excluir planilha'
+  });
+  if(!ok) return;
+
+  const btnOk = document.getElementById('btnConfirmOk');
+  if(btnOk) btnOk.disabled = true;
+
+  try{
+    const { error } = await state.client.from('datasets').delete().eq('id', datasetId);
+    if(error) throw error;
+
+    state.datasets = state.datasets.filter(d => d.id !== datasetId);
+    state.records  = state.records.filter(r => r.dataset_id !== datasetId);
+    state.columns  = state.columns.filter(c => c.dataset_id !== datasetId);
+    if(state.selectedDatasetIds){
+      state.selectedDatasetIds.delete(datasetId);
+      if(state.selectedDatasetIds.size === state.datasets.length) state.selectedDatasetIds = null;
+    }
+
+    const alvo = document.getElementById('newRecordTarget');
+    if(alvo) alvo.innerHTML = state.datasets.map(d => `<option value="${d.id}">${d.rotulo || d.nome_aba}</option>`).join('');
+
+    if(!state.datasets.length){
+      // última planilha do projeto: volta pra tela de importar
+      document.getElementById('dashboardSection').classList.add('hidden');
+      document.getElementById('uploadSection').classList.remove('hidden');
+      return;
+    }
+
+    renderDatasetChecklistFilter();
+    updateDatasetMultiselectLabel();
+    renderDashboard();
+    renderDatasetsPanel();
+    renderDataTable();
+  }catch(e){
+    console.error(e);
+    alert('Não consegui excluir: ' + (e.message || e));
+  }
+}
+
+// ----------------------------------------------------------------
+// CONSERTO: datas que ficaram gravadas como número serial do Excel
+// (importações feitas antes de a conversão passar a seguir o conteúdo
+// da coluna em vez do tipo final). 46037 → 2026-01-15.
+// ----------------------------------------------------------------
+function detectarDatasEmSerial(){
+  const achados = [];
+  const nomes = [...new Set(state.columns.map(c => c.nome_coluna))];
+  nomes.forEach(nome => {
+    const col = state.columns.find(c => c.nome_coluna === nome);
+    // só mexe onde é seguro: coluna de data pelo tipo OU pelo nome.
+    // Assim uma métrica como "Fipe" (que também tem valores 45.000+) fica fora.
+    if(!(col && col.tipo_detectado === 'data') && !nomeParecaDeData(nome)) return;
+
+    let seriais = 0, preenchidos = 0;
+    state.records.forEach(r => {
+      const v = r.dados[nome];
+      if(v === '' || v === null || v === undefined) return;
+      preenchidos++;
+      if(ehSerialDeDataExcel(v) && !ehDataISO(v)) seriais++;
+    });
+    if(seriais && seriais >= preenchidos * 0.5) achados.push({ nome, seriais });
+  });
+  return achados;
+}
+
+function renderFixDatesBanner(){
+  const banner = document.getElementById('fixDatesBanner');
+  if(!banner) return null;
+  const achados = detectarDatasEmSerial();
+  if(!achados.length){ banner.classList.add('hidden'); return null; }
+
+  const totalValores = achados.reduce((s,a) => s + a.seriais, 0);
+  document.getElementById('fixDatesTitle').textContent =
+    achados.length === 1
+      ? `A coluna "${achados[0].nome}" está guardada como número do Excel`
+      : `${achados.length} colunas de data estão guardadas como número do Excel`;
+  document.getElementById('fixDatesDetail').textContent =
+    `${totalValores.toLocaleString('pt-BR')} valores como "46037" em vez de 15/01/2026 — por isso aparecem assim nos gráficos. ` +
+    `Colunas: ${achados.map(a => a.nome).join(', ')}.`;
+  banner.classList.remove('hidden');
+  return achados;
+}
+
+async function corrigirDatasEmSerial(){
+  const achados = detectarDatasEmSerial();
+  if(!achados.length) return 0;
+  const nomes = new Set(achados.map(a => a.nome));
+
+  const alterados = [];
+  state.records.forEach(r => {
+    let mudou = false;
+    nomes.forEach(nome => {
+      const v = r.dados[nome];
+      if(v === '' || v === null || v === undefined) return;
+      if(ehDataISO(v) || !ehSerialDeDataExcel(v)) return;
+      const iso = excelSerialParaISO(v);
+      if(iso){ r.dados[nome] = iso; mudou = true; }
+    });
+    if(mudou) alterados.push(r);
+  });
+  if(!alterados.length) return 0;
+
+  const lote = 200;
+  for(let i = 0; i < alterados.length; i += lote){
+    const chunk = alterados.slice(i, i + lote).map(r => ({ id: r.id, dataset_id: r.dataset_id, dados: r.dados }));
+    const { error } = await state.client.from('records').upsert(chunk);
+    if(error) throw error;
+  }
+  return alterados.length;
+}
+
+document.getElementById('btnFixDates').addEventListener('click', async () => {
+  const btn = document.getElementById('btnFixDates');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Convertendo...';
+  try{
+    const n = await corrigirDatasEmSerial();
+    renderDashboard();
+    renderFixDatesBanner();
+    const ativa = document.querySelector('.tab-nav-inline .tab-btn.active')?.dataset.tab;
+    if(ativa === 'tabDados') renderDataTable();
+    if(ativa === 'tabComparativo') renderComparativoTab();
+    btn.textContent = n ? `${n} registros corrigidos ✓` : 'Nada a corrigir';
+  }catch(e){
+    console.error(e);
+    alert('Não consegui converter: ' + (e.message || e));
+    btn.textContent = original;
+  }finally{
+    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2200);
+  }
 });
