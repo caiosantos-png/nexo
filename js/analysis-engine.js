@@ -23,7 +23,15 @@ function rankBy(records, coluna, limit=10){
   const counts = {};
   records.forEach(r => {
     const v = r.dados[coluna];
-    const k = (v === '' || v === null || v === undefined) ? '(vazio)' : String(v);
+    if(v === '' || v === null || v === undefined){ counts['(vazio)'] = (counts['(vazio)']||0) + 1; return; }
+    // data guardada como 2026-01-15 aparece no gráfico como 15/01/2026; e se
+    // sobrou algum serial cru do Excel (46037), traduz na hora de exibir
+    let k = String(v);
+    if(ehDataISO(v)) k = fmtDataBR(v);
+    else if(nomeParecaDeData(coluna) && ehSerialDeDataExcel(v)){
+      const iso = excelSerialParaISO(v);
+      if(iso) k = fmtDataBR(iso);
+    }
     counts[k] = (counts[k]||0) + 1;
   });
   return Object.entries(counts).map(([label,count]) => ({label,count})).sort((a,b)=>b.count-a.count).slice(0,limit);
