@@ -126,6 +126,10 @@ function analyzeColumn(header, values){
   return {
     nome_coluna: header,
     tipo_detectado: tipo,
+    // o que o CONTEÚDO é, independente do que a regra fixa vai mandar depois.
+    // É por aqui que a importação sabe converter o número serial do Excel em
+    // data mesmo quando a coluna foi classificada como categoria/dimensão.
+    tipo_conteudo: tipo,
     papel,
     confianca: Math.round(confianca * 100) / 100,
     vazios: total - filled,
@@ -133,9 +137,13 @@ function analyzeColumn(header, values){
   };
 }
 
-/** Roda analyzeColumn pra todas as colunas de uma aba já lida (headers + dataRows). */
+/** Roda analyzeColumn pra todas as colunas de uma aba já lida (headers + dataRows).
+ *  Depois da detecção automática, as REGRAS FIXAS (column-rules.js) passam por
+ *  cima do que bateu com o nome de alguma regra — é o que deixa a
+ *  pré-visualização já vir configurada no padrão do cliente. */
 function analyzeSheetColumns(headers, dataRows){
-  return headers.map((h, idx) => analyzeColumn(h, dataRows.slice(0, 200).map(r => r[idx])));
+  const cols = headers.map((h, idx) => analyzeColumn(h, dataRows.slice(0, 200).map(r => r[idx])));
+  return (typeof aplicarRegrasNasColunas === 'function') ? aplicarRegrasNasColunas(cols) : cols;
 }
 
 const TIPO_OPTIONS = ['data','hora','percentual','numero','moeda','booleano','categoria','texto'];
@@ -146,4 +154,48 @@ function excelFracToHHMM(frac){
   const totalMin = Math.round((frac % 1) * 24 * 60);
   const h = Math.floor(totalMin / 60), m = totalMin % 60;
   return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+}
+
+/* ============================================================
+   DATAS QUE VÊM COMO NÚMERO DO EXCEL
+   O Excel guarda 15/01/2026 como 46037 (dias desde 30/12/1899).
+   Se a coluna acabar classificada como categoria/texto, esse número
+   ia parar cru no banco e aparecia "46037" no gráfico. Estas funções
+   são o tradutor usado na importação, na exibição e no conserto.
+   ============================================================ */
+
+/** Faixa plausível pra data em serial do Excel: 1954 → 2064. */
+const EXCEL_SERIAL_MIN = 20000;
+const EXCEL_SERIAL_MAX = 60000;
+
+function ehSerialDeDataExcel(v){
+  const n = typeof v === 'number' ? v : (typeof v === 'string' && /^\d{4,5}(\.\d+)?$/.test(v.trim()) ? parseFloat(v) : NaN);
+  return Number.isFinite(n) && n >= EXCEL_SERIAL_MIN && n <= EXCEL_SERIAL_MAX;
+}
+
+/** 46037 → '2026-01-15' (30/12/1899 + n dias; parte fracionária é a hora). */
+function excelSerialParaISO(v){
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  if(!Number.isFinite(n)) return null;
+  const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(n) * 86400000);
+  if(isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+/** true pra '2026-01-15' (o formato em que o NEXO guarda data). */
+function ehDataISO(v){
+  return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
+}
+
+/** '2026-01-15' → '15/01/2026' (só pra mostrar; o banco continua ISO). */
+function fmtDataBR(v){
+  if(!ehDataISO(v)) return v;
+  const [y, m, d] = String(v).trim().split('-');
+  return `${d}/${m}/${y}`;
+}
+
+/** O nome da coluna fala de data? (usado pra não confundir com Fipe e afins) */
+function nomeParecaDeData(nome){
+  return /\bdata\b|\bdatas\b|\bdate\b|\bdt\b|vencimento|emissao|emissão|nascimento|acionamento|ocorrencia|ocorrência/i
+    .test(String(nome || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 }
