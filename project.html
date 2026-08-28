@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NEXO — Projeto</title>
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
@@ -13,7 +15,7 @@
 <header class="topbar">
   <div class="brand">
     <a href="home.html" style="text-decoration:none; display:flex; align-items:center; gap:12px; color:inherit;">
-      <span class="brand-mark"><span class="sweep"></span></span>
+      <img src="img/logo.png" alt="NEXO" class="brand-mark">
       <div class="brand-text"><span class="brand-name" id="projectName">NEXO</span><span class="brand-sub" id="projectArea">projeto</span></div>
     </a>
   </div>
@@ -79,8 +81,18 @@
         <button class="btn btn-ghost" id="btnImportMore">+ Importar outra planilha</button>
         <button class="btn btn-ghost" id="btnPresent" disabled>Apresentação</button>
         <button class="btn btn-ghost" id="btnExportPdf" disabled>Exportar PDF</button>
-        <button class="btn btn-primary" id="btnExportPptx" disabled>Exportar .pptx</button>
+        <button class="btn btn-ghost" id="btnExportPptx" disabled>Exportar .pptx</button>
+        <button class="btn btn-primary" id="btnExportXlsx" disabled>Exportar Excel</button>
       </div>
+    </div>
+
+    <div id="fixDatesBanner" class="fix-banner hidden">
+      <div class="fix-banner-icon">!</div>
+      <div class="fix-banner-text">
+        <strong id="fixDatesTitle"></strong>
+        <span id="fixDatesDetail"></span>
+      </div>
+      <button class="btn btn-primary btn-sm" id="btnFixDates">Converter em data</button>
     </div>
 
     <div class="filters" style="justify-content:space-between;">
@@ -103,6 +115,7 @@
         <button class="tab-btn" data-tab="tabDados">Dados</button>
         <button class="tab-btn" data-tab="tabComparativo">Comparativo</button>
         <button class="tab-btn" data-tab="tabAproveitamento">Aproveitamento</button>
+        <button class="tab-btn" data-tab="tabRegras">Regras</button>
       </nav>
     </div>
 
@@ -118,11 +131,20 @@
     </div>
 
     <div id="tabDados" class="tab-panel hidden">
+      <div class="panel" id="datasetsPanel">
+        <div class="panel-head">
+          <div><span class="panel-title">Planilhas importadas</span> <span class="panel-hint">exclua uma planilha inteira sem mexer nas outras</span></div>
+          <button class="btn-link" id="btnToggleDatasets">ocultar</button>
+        </div>
+        <div id="datasetsBody"><div id="datasetsList" class="ds-list"></div></div>
+      </div>
+
       <div class="panel" id="columnsPanel">
         <div class="panel-head">
           <div><span class="panel-title">Colunas desta seleção</span> <span class="panel-hint">promova pra métrica/dimensão sem reimportar</span></div>
-          <button class="btn-link" id="btnToggleColumns">mostrar/ocultar</button>
+          <button class="btn-link" id="btnToggleColumns">mostrar</button>
         </div>
+        <p id="columnsSummary" class="panel-summary"></p>
         <div id="columnsBody" class="table-wrap hidden"><table id="columnsTable" class="data-table"></table></div>
       </div>
 
@@ -182,6 +204,8 @@
         <div class="filters" id="aprovFilters"></div>
       </div>
 
+      <div id="aprovAviso" class="hidden" style="margin-bottom:18px;"></div>
+
       <div id="aprovKpis" class="kpi-strip"></div>
 
       <div class="panel">
@@ -200,6 +224,42 @@
         <pre id="aprovCruzamentos" class="aprov-texto"></pre>
       </div>
     </div>
+
+    <!-- ======================= ABA REGRAS ======================= -->
+    <div id="tabRegras" class="tab-panel hidden">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">Regras fixas de coluna</span>
+            <span class="panel-hint">quando o nome da coluna bate com uma regra, o tipo e o papel abaixo mandam — a detecção automática não opina</span>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-ghost btn-sm" id="btnResetRegras">Voltar ao padrão</button>
+            <button class="btn btn-ghost btn-sm" id="btnAddRegra">+ Nova regra</button>
+            <button class="btn btn-primary btn-sm" id="btnSalvarRegras">Salvar regras</button>
+          </div>
+        </div>
+        <p class="rules-note">
+          O nome é comparado inteiro, ignorando maiúsculas, acentos e pontuação —
+          <code>EQUIPE (ACIONADA)</code> e <code>equipe acionada</code> são a mesma coisa.
+          Em <strong>Outros nomes</strong>, separe por vírgula as variações que aparecem
+          em outras planilhas (ex.: <code>qtd, qtde</code>).
+        </p>
+        <div class="table-wrap"><table id="regrasTable" class="data-table"></table></div>
+        <p id="regrasStatus" class="rules-status"></p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">Aplicar nos dados já importados</span>
+            <span class="panel-hint">reclassifica as colunas das planilhas que já estão no projeto, sem reimportar nada</span>
+          </div>
+          <button class="btn btn-primary btn-sm" id="btnReaplicarRegras">Reaplicar agora</button>
+        </div>
+        <div id="regrasImpacto" class="rules-impact"></div>
+      </div>
+    </div>
   </section>
 </div>
 
@@ -215,6 +275,19 @@
 </section>
 
 <div id="reportPrintArea" class="report-print"></div>
+
+<!-- ======================= CONFIRMAÇÃO (excluir planilha etc.) ======================= -->
+<div id="confirmModal" class="modal-overlay hidden">
+  <div class="modal modal-danger">
+    <div class="modal-head"><span id="confirmTitle">Confirmar</span><button class="modal-close" id="btnConfirmClose">✕</button></div>
+    <p id="confirmMessage" class="confirm-msg"></p>
+    <div id="confirmDetail" class="confirm-detail hidden"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btnConfirmCancel">Cancelar</button>
+      <button class="btn btn-danger" id="btnConfirmOk">Excluir</button>
+    </div>
+  </div>
+</div>
 
 <!-- ======================= CONFIGURAÇÕES DO PROJETO ======================= -->
 <div id="settingsModal" class="modal-overlay hidden">
@@ -253,13 +326,16 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/supabase-client.js"></script>
+<script src="js/column-rules.js"></script>
 <script src="js/type-detector.js"></script>
 <script src="js/import-engine.js"></script>
 <script src="js/analysis-engine.js"></script>
 <script src="js/insights-engine.js"></script>
 <script src="js/presentation-engine.js"></script>
 <script src="js/project.js"></script>
+<script src="js/export-excel.js"></script>
 </body>
 </html>
