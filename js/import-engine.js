@@ -150,16 +150,21 @@ function parseWorkbook(arrayBuffer){
 
 /** Converte as linhas cruas de uma aba em registros genéricos { header: valor }. */
 function rowsToRecords(headers, dataRows, columnDefs){
-  const dateColSet = new Set(columnDefs.filter(c => c.tipo_detectado === 'data').map(c => c.nome_coluna));
-  const timeColSet = new Set(columnDefs.filter(c => c.tipo_detectado === 'hora').map(c => c.nome_coluna));
-  const pctColSet = new Set(columnDefs.filter(c => c.tipo_detectado === 'percentual').map(c => c.nome_coluna));
+  // IMPORTANTE: a conversão segue o CONTEÚDO da coluna (tipo_conteudo), não o
+  // tipo final. Uma coluna de data classificada como "categoria" por uma regra
+  // fixa continua sendo gravada como 2026-01-15 — senão o serial cru do Excel
+  // (46037) ia parar no banco e aparecia assim nos gráficos.
+  const ehTipo = (c, tipo) => c.tipo_conteudo === tipo || c.tipo_detectado === tipo;
+  const dateColSet = new Set(columnDefs.filter(c => ehTipo(c,'data')).map(c => c.nome_coluna));
+  const timeColSet = new Set(columnDefs.filter(c => ehTipo(c,'hora') && !dateColSet.has(c.nome_coluna)).map(c => c.nome_coluna));
+  const pctColSet  = new Set(columnDefs.filter(c => ehTipo(c,'percentual')).map(c => c.nome_coluna));
   return dataRows.map(row => {
     const dados = {};
     headers.forEach((h, idx) => {
       let v = row[idx];
       if(v === '' || v === null || v === undefined) return;
       if(dateColSet.has(h)){
-        const parsed = parseDateLoose(v);
+        const parsed = parseDateLoose(v) || (ehSerialDeDataExcel(v) ? excelSerialParaISO(v) : null);
         if(parsed) v = parsed;
       }else if(timeColSet.has(h) && typeof v === 'number'){
         v = excelFracToHHMM(v);
